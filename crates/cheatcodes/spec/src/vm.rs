@@ -306,6 +306,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
 
+
+    // Generate / derive the public key coordinates based on the secp256r1 curve from a random uint256 private key
+    #[cheatcode(group =  Evm , safety = Safe)]
+    function generatePublicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     // -------- Record Storage --------
 
     /// Records all storage reads and writes.

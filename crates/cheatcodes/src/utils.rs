@@ -257,6 +257,26 @@ pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcod
     Ok((r_bytes, s_bytes).abi_encode())
 }
 
+pub(super) fn generatePublicKeyP256(private_key : &U256) -> Result{
+    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    let n = U256::from_limbs(*p256::NistP256::ORDER.as_words());
+    ensure!(
+        *private_key < n,
+        format!("private key must be less than the secp256r1 curve order ({})", n),
+    );
+   let sk_bytes = private_key.to_be_bytes();
+    let secret_key = p256::SecretKey::from_bytes(&sk_bytes.into())
+        .map_err(|_| "can't produce p256 secret key from bytes".to_string())?;
+    let secret = secret_key.to_owned();
+    let public_key = secret.public_key();
+    let affine_points = public_key.as_affine();
+    let points =  affine_points.to_encoded_point(false);
+    let pub_key_x = U256::from_be_bytes((*points.x().unwrap()).into());
+    let pub_key_y = U256::from_be_bytes((*points.y().unwrap()).into());
+    return Ok((pub_key_x , pub_key_y).abi_encode())
+    
+}
+
 pub(super) fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
     ensure!(
@@ -312,7 +332,8 @@ mod tests {
     use crate::CheatsConfig;
     use alloy_primitives::FixedBytes;
     use hex::FromHex;
-    use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use k256::elliptic_curve::point::AffineCoordinates;
+    use p256::{ecdsa::signature::hazmat::PrehashVerifier, AffinePoint};
     use std::{path::PathBuf, sync::Arc};
 
     fn cheats() -> Cheatcodes {
@@ -367,4 +388,29 @@ mod tests {
         let result = sign_p256(&U256::ZERO, &digest, &mut cheats);
         assert_eq!(result.err().unwrap().to_string(), "private key cannot be 0");
     }
+    #[test]
+fn test_affinecoordinatesp256() {
+    let pk_u256: U256 = "100".parse().unwrap(); // Parse private key, assuming valid U256 creation
+    let result = generatePublicKeyP256(&pk_u256).unwrap(); // Get the ABI-encoded result
+
+    // Ensure the result has exactly 64 bytes (32 for x and 32 for y)
+    assert_eq!(result.len(), 64, "Resulting byte array must be exactly 64 bytes long.");
+
+    // Convert Vec<u8> to a fixed-size array of 64 bytes
+    let result_bytes: [u8; 64] = result.try_into().expect("Slice with incorrect length");
+
+    // Extract x and y coordinates from the array
+    let x_bytes: [u8; 32] = result_bytes[0..32].try_into().expect("Error slicing x bytes");
+    let y_bytes: [u8; 32] = result_bytes[32..64].try_into().expect("Error slicing y bytes");
+
+    // Convert byte arrays into U256 values
+    let x_coord = U256::from_be_bytes(x_bytes);
+    let y_coord = U256::from_be_bytes(y_bytes);
+
+    // Use x_coord and y_coord as U256 values in your tests
+    println!("x_coord: {}", x_coord);
+    println!("y_coord: {}", y_coord);
+}
+
+    
 }
