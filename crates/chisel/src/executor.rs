@@ -13,7 +13,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
-    inspectors::CheatsConfig,
+    inspectors::CheatsConfig, traces::TraceMode,
 };
 use solang_parser::pt::{self, CodeLocation};
 use std::str::FromStr;
@@ -302,7 +302,7 @@ impl SessionSource {
         // Build a new executor
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
-                stack.chisel_state(final_pc).trace(true).cheatcodes(
+                stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
                     CheatsConfig::new(
                         &self.config.foundry_config,
                         self.config.evm_opts.clone(),
@@ -315,6 +315,7 @@ impl SessionSource {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .spec(self.config.foundry_config.evm_spec_id())
+            .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(env, backend);
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
@@ -417,8 +418,7 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Tuple(tokens) => {
             let displayed_types = tokens
                 .iter()
-                .map(|t| t.sol_type_name().to_owned())
-                .map(|t| t.unwrap_or_default().into_owned())
+                .map(|t| t.sol_type_name().unwrap_or_default())
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut out =
@@ -1392,7 +1392,7 @@ impl<'a> Iterator for InstructionIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{error::SolcError, Solc};
+    use foundry_compilers::{error::SolcError, solc::Solc};
     use semver::Version;
     use std::sync::Mutex;
 

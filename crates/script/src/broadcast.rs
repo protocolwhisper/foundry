@@ -3,11 +3,13 @@ use crate::{
     verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
 use alloy_chains::Chain;
+use alloy_consensus::TxEnvelope;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{AnyNetwork, EthereumSigner, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{utils::format_units, Address, TxHash};
 use alloy_provider::{utils::Eip1559Estimation, Provider};
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
@@ -15,7 +17,7 @@ use foundry_cheatcodes::ScriptWallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell,
+    shell, TransactionMaybeSigned,
 };
 use foundry_config::Config;
 use futures::{future::join_all, StreamExt};
@@ -54,44 +56,48 @@ pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64
 
 pub async fn send_transaction(
     provider: Arc<RetryProvider>,
-    mut tx: WithOtherFields<TransactionRequest>,
-    kind: SendTransactionKind<'_>,
+    mut kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
     is_fixed_gas_limit: bool,
     estimate_via_rpc: bool,
     estimate_multiplier: u64,
 ) -> Result<TxHash> {
-    let from = tx.from.expect("no sender");
+    if let SendTransactionKind::Raw(tx, _) | SendTransactionKind::Unlocked(tx) = &mut kind {
+        if sequential_broadcast {
+            let from = tx.from.expect("no sender");
 
-    if sequential_broadcast {
-        let nonce = provider.get_transaction_count(from).await?;
+            let nonce = provider.get_transaction_count(from).await?;
 
-        let tx_nonce = tx.nonce.expect("no nonce");
-        if nonce != tx_nonce {
-            bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            let tx_nonce = tx.nonce.expect("no nonce");
+            if nonce != tx_nonce {
+                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            }
+        }
+
+        // Chains which use `eth_estimateGas` are being sent sequentially and require their
+        // gas to be re-estimated right before broadcasting.
+        if !is_fixed_gas_limit && estimate_via_rpc {
+            estimate_gas(tx, &provider, estimate_multiplier).await?;
         }
     }
 
-    // Chains which use `eth_estimateGas` are being sent sequentially and require their
-    // gas to be re-estimated right before broadcasting.
-    if !is_fixed_gas_limit && estimate_via_rpc {
-        estimate_gas(&mut tx, &provider, estimate_multiplier).await?;
-    }
-
     let pending = match kind {
-        SendTransactionKind::Unlocked(addr) => {
-            debug!("sending transaction from unlocked account {:?}: {:?}", addr, tx);
+        SendTransactionKind::Unlocked(tx) => {
+            debug!("sending transaction from unlocked account {:?}", tx);
 
             // Submit the transaction
             provider.send_transaction(tx).await?
         }
-        SendTransactionKind::Raw(signer) => {
+        SendTransactionKind::Raw(tx, signer) => {
             debug!("sending transaction: {:?}", tx);
-
             let signed = tx.build(signer).await?;
 
             // Submit the raw transaction
             provider.send_raw_transaction(signed.encoded_2718().as_ref()).await?
+        }
+        SendTransactionKind::Signed(tx) => {
+            debug!("sending transaction: {:?}", tx);
+            provider.send_raw_transaction(tx.encoded_2718().as_ref()).await?
         }
     };
 
@@ -101,8 +107,9 @@ pub async fn send_transaction(
 /// How to send a single transaction
 #[derive(Clone)]
 pub enum SendTransactionKind<'a> {
-    Unlocked(Address),
-    Raw(&'a EthereumSigner),
+    Unlocked(WithOtherFields<TransactionRequest>),
+    Raw(WithOtherFields<TransactionRequest>, &'a EthereumWallet),
+    Signed(TxEnvelope),
 }
 
 /// Represents how to send _all_ transactions
@@ -110,36 +117,32 @@ pub enum SendTransactionsKind {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
     Unlocked(HashSet<Address>),
     /// Send a signed transaction via `eth_sendRawTransaction`
-    Raw(HashMap<Address, EthereumSigner>),
+    Raw(HashMap<Address, EthereumWallet>),
 }
 
 impl SendTransactionsKind {
     /// Returns the [`SendTransactionKind`] for the given address
     ///
     /// Returns an error if no matching signer is found or the address is not unlocked
-    pub fn for_sender(&self, addr: &Address) -> Result<SendTransactionKind<'_>> {
+    pub fn for_sender(
+        &self,
+        addr: &Address,
+        tx: WithOtherFields<TransactionRequest>,
+    ) -> Result<SendTransactionKind<'_>> {
         match self {
             Self::Unlocked(unlocked) => {
                 if !unlocked.contains(addr) {
                     bail!("Sender address {:?} is not unlocked", addr)
                 }
-                Ok(SendTransactionKind::Unlocked(*addr))
+                Ok(SendTransactionKind::Unlocked(tx))
             }
             Self::Raw(wallets) => {
                 if let Some(wallet) = wallets.get(addr) {
-                    Ok(SendTransactionKind::Raw(wallet))
+                    Ok(SendTransactionKind::Raw(tx, wallet))
                 } else {
                     bail!("No matching signer for {:?} found", addr)
                 }
             }
-        }
-    }
-
-    /// How many signers are set
-    pub fn signers_count(&self) -> usize {
-        match self {
-            Self::Unlocked(addr) => addr.len(),
-            Self::Raw(signers) => signers.len(),
         }
     }
 }
@@ -188,11 +191,7 @@ impl BundledState {
             .sequence
             .sequences()
             .iter()
-            .flat_map(|sequence| {
-                sequence
-                    .transactions()
-                    .map(|tx| (tx.from().expect("No sender for onchain transaction!")))
-            })
+            .flat_map(|sequence| sequence.transactions().map(|tx| tx.from().expect("missing from")))
             .collect::<HashSet<_>>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
@@ -202,7 +201,7 @@ impl BundledState {
         }
 
         let send_kind = if self.args.unlocked {
-            SendTransactionsKind::Unlocked(required_addresses)
+            SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
             let signers = self.script_wallets.into_multi_wallet().into_signers()?;
             let mut missing_addresses = Vec::new();
@@ -223,7 +222,7 @@ impl BundledState {
 
             let signers = signers
                 .into_iter()
-                .map(|(addr, signer)| (addr, EthereumSigner::new(signer)))
+                .map(|(addr, signer)| (addr, EthereumWallet::new(signer)))
                 .collect();
 
             SendTransactionsKind::Raw(signers)
@@ -278,29 +277,38 @@ impl BundledState {
                     .iter()
                     .skip(already_broadcasted)
                     .map(|tx_with_metadata| {
-                        let tx = tx_with_metadata.tx();
-                        let from = tx.from().expect("No sender for onchain transaction!");
-
-                        let kind = send_kind.for_sender(&from)?;
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                        let mut tx = tx.clone();
-                        tx.set_chain_id(sequence.chain);
+                        let kind = match tx_with_metadata.tx().clone() {
+                            TransactionMaybeSigned::Signed { tx, .. } => {
+                                SendTransactionKind::Signed(tx)
+                            }
+                            TransactionMaybeSigned::Unsigned(mut tx) => {
+                                let from = tx.from.expect("No sender for onchain transaction!");
 
-                        // Set TxKind::Create explicityly to satify `check_reqd_fields` in alloy
-                        if tx.to().is_none() {
-                            tx.set_create();
-                        }
+                                tx.set_chain_id(sequence.chain);
 
-                        if let Some(gas_price) = gas_price {
-                            tx.set_gas_price(gas_price);
-                        } else {
-                            let eip1559_fees = eip1559_fees.expect("was set above");
-                            tx.set_max_priority_fee_per_gas(eip1559_fees.max_priority_fee_per_gas);
-                            tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                        }
+                                // Set TxKind::Create explicitly to satify `check_reqd_fields` in
+                                // alloy
+                                if tx.to.is_none() {
+                                    tx.set_create();
+                                }
 
-                        Ok((tx, kind, is_fixed_gas_limit))
+                                if let Some(gas_price) = gas_price {
+                                    tx.set_gas_price(gas_price);
+                                } else {
+                                    let eip1559_fees = eip1559_fees.expect("was set above");
+                                    tx.set_max_priority_fee_per_gas(
+                                        eip1559_fees.max_priority_fee_per_gas,
+                                    );
+                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
+                                }
+
+                                send_kind.for_sender(&from, tx)?
+                            }
+                        };
+
+                        Ok((kind, is_fixed_gas_limit))
                     })
                     .collect::<Result<Vec<_>>>()?;
 
@@ -314,7 +322,7 @@ impl BundledState {
                 // Or if we need to invoke eth_estimateGas before sending transactions.
                 let sequential_broadcast = estimate_via_rpc ||
                     self.args.slow ||
-                    send_kind.signers_count() != 1 ||
+                    required_addresses.len() != 1 ||
                     !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.
@@ -329,10 +337,9 @@ impl BundledState {
                         batch_number * batch_size,
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
-                    for (tx, kind, is_fixed_gas_limit) in batch {
+                    for (kind, is_fixed_gas_limit) in batch {
                         let fut = send_transaction(
                             provider.clone(),
-                            tx.clone(),
                             kind.clone(),
                             sequential_broadcast,
                             *is_fixed_gas_limit,

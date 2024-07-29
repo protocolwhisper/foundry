@@ -18,7 +18,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use watchexec::config::{InitConfig, RuntimeConfig};
+use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
@@ -46,6 +46,10 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options", about = None, long_about = None)] // override doc
 pub struct BuildArgs {
+    /// Build source files from specified paths.
+    #[serde(skip)]
+    pub paths: Option<Vec<PathBuf>>,
+
     /// Print compiled contract names.
     #[arg(long)]
     #[serde(skip)]
@@ -86,9 +90,11 @@ impl BuildArgs {
 
         // Collect sources to compile if build subdirectories specified.
         let mut files = vec![];
-        if let Some(dirs) = self.args.paths {
-            for dir in dirs {
-                files.extend(source_files_iter(dir, MultiCompilerLanguage::FILE_EXTENSIONS));
+        if let Some(paths) = &self.paths {
+            for path in paths {
+                let joined = project.root().join(path);
+                let path = if joined.exists() { &joined } else { path };
+                files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
         }
 
@@ -102,7 +108,7 @@ impl BuildArgs {
         let output = compiler.compile(&project)?;
 
         if self.format_json {
-            println!("{}", serde_json::to_string_pretty(&output.clone().output())?);
+            println!("{}", serde_json::to_string_pretty(&output.output())?);
         }
 
         Ok(output)
@@ -124,11 +130,11 @@ impl BuildArgs {
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
-    pub(crate) fn watchexec_config(&self) -> Result<(InitConfig, RuntimeConfig)> {
+    pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test, config.script]
+            [config.src, config.test, config.script]
         })
     }
 }

@@ -1,7 +1,8 @@
 use crate::tx::{self, CastTxBuilder};
-use alloy_network::{AnyNetwork, EthereumSigner};
+use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{TransactionRequest, WithOtherFields};
+use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::Transport;
 use cast::Cast;
@@ -56,7 +57,13 @@ pub struct SendTxArgs {
     eth: EthereumOpts,
 
     /// The path of blob data to be sent.
-    #[arg(long, value_name = "BLOB_DATA_PATH", conflicts_with = "legacy", requires = "blob")]
+    #[arg(
+        long,
+        value_name = "BLOB_DATA_PATH",
+        conflicts_with = "legacy",
+        requires = "blob",
+        help_heading = "Transaction options"
+    )]
     path: Option<PathBuf>,
 }
 
@@ -157,9 +164,9 @@ impl SendTxArgs {
 
             tx::validate_from_address(eth.wallet.from, from)?;
 
-            let signer = EthereumSigner::from(signer);
+            let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .signer(signer)
+                .wallet(wallet)
                 .on_provider(&provider);
 
             let (tx, _) = builder.build(from).await?;

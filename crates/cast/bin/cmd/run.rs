@@ -9,7 +9,7 @@ use foundry_cli::{
     utils::{handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
-use foundry_compilers::EvmVersion;
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{find_project_root_path, Config};
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
@@ -26,6 +26,10 @@ pub struct RunArgs {
     /// Opens the transaction in the debugger.
     #[arg(long, short)]
     debug: bool,
+
+    /// Whether to identify internal functions in traces.
+    #[arg(long)]
+    decode_internal: bool,
 
     /// Print out opcode traces.
     #[arg(long, short)]
@@ -142,7 +146,8 @@ impl RunArgs {
             }
         }
 
-        let mut executor = TracingExecutor::new(env.clone(), fork, evm_version, self.debug);
+        let mut executor =
+            TracingExecutor::new(env.clone(), fork, evm_version, self.debug, self.decode_internal);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
@@ -220,7 +225,7 @@ impl RunArgs {
             }
         };
 
-        handle_traces(result, &config, chain, self.label, self.debug).await?;
+        handle_traces(result, &config, chain, self.label, self.debug, self.decode_internal).await?;
 
         Ok(())
     }

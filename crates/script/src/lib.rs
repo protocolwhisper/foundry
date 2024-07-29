@@ -11,7 +11,7 @@ extern crate tracing;
 use self::transaction::AdditionalContract;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
+use alloy_primitives::{hex, Address, Bytes, Log, TxKind, U256};
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
@@ -37,14 +37,13 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     constants::DEFAULT_CREATE2_DEPLOYER,
-    debug::DebugArena,
     executors::ExecutorBuilder,
     inspectors::{
         cheatcodes::{BroadcastableTransactions, ScriptWallets},
         CheatsConfig,
     },
     opts::EvmOpts,
-    traces::Traces,
+    traces::{TraceMode, Traces},
 };
 use foundry_wallets::MultiWalletOpts;
 use serde::{Deserialize, Serialize};
@@ -170,7 +169,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub json: bool,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
     #[arg(
         long,
         env = "ETH_GAS_PRICE",
@@ -196,7 +198,7 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets =
             ScriptWallets::new(self.wallets.get_multi_wallet().await?, self.evm_opts.sender);
 
@@ -235,7 +237,7 @@ impl ScriptArgs {
                 .await?;
 
             if pre_simulation.args.debug {
-                pre_simulation.run_debugger()?;
+                return pre_simulation.run_debugger()
             }
 
             if pre_simulation.args.json {
@@ -387,11 +389,9 @@ impl ScriptArgs {
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
                 tx.transaction
-                    .input
-                    .clone()
-                    .into_input()
+                    .input()
                     .filter(|data| data.len() > max_size)
-                    .map(|data| (data, tx.transaction.to))
+                    .map(|data| (data, tx.transaction.to()))
             })
         }) {
             let mut offset = 0;
@@ -462,7 +462,6 @@ pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
     pub traces: Traces,
-    pub debug: Option<Vec<DebugArena>>,
     pub gas_used: u64,
     pub labeled_addresses: HashMap<Address, String>,
     pub transactions: Option<BroadcastableTransactions>,
@@ -576,14 +575,16 @@ impl ScriptConfig {
 
         // We need to enable tracing to decode contract names: local or external.
         let mut builder = ExecutorBuilder::new()
-            .inspectors(|stack| stack.trace(true))
+            .inspectors(|stack| {
+                stack.trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+            })
             .spec(self.config.evm_spec_id())
-            .gas_limit(self.evm_opts.gas_limit());
+            .gas_limit(self.evm_opts.gas_limit())
+            .legacy_assertions(self.config.legacy_assertions);
 
         if let Some((known_contracts, script_wallets, target)) = cheats_data {
             builder = builder.inspectors(|stack| {
                 stack
-                    .debug(debug)
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config,
