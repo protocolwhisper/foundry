@@ -181,7 +181,6 @@ impl Cheatcode for randomAddressCall {
     }
 }
 
-
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
@@ -264,25 +263,23 @@ pub(super) fn sign_p256(private_key: &U256, digest: &B256, _state: &mut Cheatcod
     Ok((r_bytes, s_bytes).abi_encode())
 }
 
-pub(super) fn generate_public_key_p256(private_key : &U256) -> Result {
+pub(super) fn generate_public_key_p256(private_key: &U256) -> Result {
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
     let n = U256::from_limbs(*p256::NistP256::ORDER.as_words());
     ensure!(
         *private_key < n,
         format!("private key must be less than the secp256r1 curve order ({})", n),
     );
-   let sk_bytes = private_key.to_be_bytes();
+    let sk_bytes = private_key.to_be_bytes();
     let secret_key = p256::SecretKey::from_bytes(&sk_bytes.into())
         .map_err(|_| "can't produce p256 secret key from bytes".to_string())?;
-    let secret = secret_key.to_owned();
-    let public_key = secret.public_key();
+    let public_key = secret_key.public_key();
     let affine_points = public_key.as_affine();
-    let points =  affine_points.to_encoded_point(false);
+    let points = affine_points.to_encoded_point(false);
     let pub_key_x = U256::from_be_bytes((*points.x().unwrap()).into());
     let pub_key_y = U256::from_be_bytes((*points.y().unwrap()).into());
-    
-    Ok((pub_key_x , pub_key_y).abi_encode())
-    
+
+    Ok((pub_key_x, pub_key_y).abi_encode())
 }
 
 pub(super) fn parse_private_key(private_key: &U256) -> Result<SigningKey> {
@@ -338,10 +335,13 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{hex::{self, FromHex}, FixedBytes};
+    use alloy_primitives::{
+        hex::{self, FromHex},
+        FixedBytes,
+    };
     use p256::{ecdsa::signature::hazmat::PrehashVerifier, SecretKey};
     use std::{path::PathBuf, sync::Arc};
-    
+
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
             ffi: true,
@@ -396,67 +396,77 @@ mod tests {
     }
     #[test]
     fn test_affinecoordinatesp256() {
-    let pk_u256: U256 = "100".parse().unwrap(); // Parse private key, assuming valid U256 creation
-    let result = generate_public_key_p256(&pk_u256).unwrap(); // Get the ABI-encoded result
+        let pk_u256: U256 = "100".parse().unwrap(); // Parse private key, assuming valid U256 creation
+        let result = generate_public_key_p256(&pk_u256).unwrap(); // Get the ABI-encoded result
 
-    // Ensure the result has exactly 64 bytes (32 for x and 32 for y)
-    assert_eq!(result.len(), 64, "Resulting byte array must be exactly 64 bytes long.");
+        // Ensure the result has exactly 64 bytes (32 for x and 32 for y)
+        assert_eq!(result.len(), 64, "Resulting byte array must be exactly 64 bytes long.");
 
-    // Convert Vec<u8> to a fixed-size array of 64 bytes
-    let result_bytes: [u8; 64] = result.try_into().expect("Slice with incorrect length");
+        // Convert Vec<u8> to a fixed-size array of 64 bytes
+        let result_bytes: [u8; 64] = result.try_into().expect("Slice with incorrect length");
 
-    // Extract x and y coordinates from the array
-    let x_bytes: [u8; 32] = result_bytes[0..32].try_into().expect("Error slicing x bytes");
-    let y_bytes: [u8; 32] = result_bytes[32..64].try_into().expect("Error slicing y bytes");
+        // Extract x and y coordinates from the array
+        let x_bytes: [u8; 32] = result_bytes[0..32].try_into().expect("Error slicing x bytes");
+        let y_bytes: [u8; 32] = result_bytes[32..64].try_into().expect("Error slicing y bytes");
 
-    // Convert byte arrays into U256 values
-    let x_coord = U256::from_be_bytes(x_bytes);
-    let y_coord = U256::from_be_bytes(y_bytes);
+        // Convert byte arrays into U256 values
+        let x_coord = U256::from_be_bytes(x_bytes);
+        let y_coord = U256::from_be_bytes(y_bytes);
 
-    // Use x_coord and y_coord as U256 values in your tests
-    println!("x_coord: {}", x_coord);
-    println!("y_coord: {}", y_coord);   
-    
+        // Use x_coord and y_coord as U256 values in your tests
+        println!("x_coord: {x_coord}");
+        println!("y_coord: {y_coord}");
     }
     #[test]
     fn test_p256_publickey_generation() {
         // Hexadecimal private key
         let hex_private_key = "8449b2b5f4dbeaf8b454fe16cb1f577c3d05df5224021390438b5c2c5a8ac235";
-    
+
         // Convert the hex string to bytes
         let private_key_bytes = hex::decode(hex_private_key).expect("Decoding failed");
-    
+
         // Ensure the byte array is of correct length (32 bytes for P-256)
         assert_eq!(private_key_bytes.len(), 32, "Private key must be 32 bytes long");
-    
+
         // Convert the byte array to a fixed-size array
-        let private_key_array: [u8; 32] = private_key_bytes.try_into().expect("Invalid length for private key");
-    
+        let private_key_array: [u8; 32] =
+            private_key_bytes.try_into().expect("Invalid length for private key");
+
         // Create a p256 SecretKey from the bytes
-        let secret_key = SecretKey::from_bytes((&private_key_array).into()).expect("Invalid private key");
-    
+        let secret_key =
+            SecretKey::from_bytes((&private_key_array).into()).expect("Invalid private key");
+
         // Derive the public key
         let public_key = secret_key.public_key();
         let public_key_encoded = public_key.to_encoded_point(false);
-    
+
         // Extract the x and y coordinates
         let x = public_key_encoded.x().expect("Invalid public key").to_vec();
         let y = public_key_encoded.y().expect("Invalid public key").to_vec();
-    
+
         // Convert x and y to U256
         let x_u256 = U256::from_be_bytes::<32>(x.try_into().expect("Invalid length for x"));
         let y_u256 = U256::from_be_bytes::<32>(y.try_into().expect("Invalid length for y"));
-    
-        println!("x: {:?}", x_u256);
-        println!("y: {:?}", y_u256);
-    
+
+        println!("x: {x_u256:?}");
+        println!("y: {y_u256:?}");
+
         // Expected public key coordinates
-        let expected_x = U256::from_be_bytes::<32>(hex::decode("4590c8ef86344c05b8502e4dfc88fc7dce961766ce216781825879297d467d94").unwrap().try_into().unwrap());
-        let expected_y = U256::from_be_bytes::<32>(hex::decode("aa1eebf8ed7dcbbd9c467e6d4d6c9c22de0bf7307c50aedfc42c317b5fe4f7ac").unwrap().try_into().unwrap());
-    
+        let expected_x = U256::from_be_bytes::<32>(
+            hex::decode("4590c8ef86344c05b8502e4dfc88fc7dce961766ce216781825879297d467d94")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        let expected_y = U256::from_be_bytes::<32>(
+            hex::decode("aa1eebf8ed7dcbbd9c467e6d4d6c9c22de0bf7307c50aedfc42c317b5fe4f7ac")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+
         // Verify the result
         assert_eq!(x_u256, expected_x);
         assert_eq!(y_u256, expected_y);
     }
-    
 }
