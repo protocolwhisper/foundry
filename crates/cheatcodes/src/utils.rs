@@ -180,7 +180,6 @@ impl Cheatcode for randomAddressCall {
         Ok(addr.abi_encode())
     }
 }
-
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///

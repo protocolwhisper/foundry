@@ -187,7 +187,7 @@ impl Cheatcode for signP256Call {
     }
 }
 
-impl Cheatcode for generate_public_key_p256Call{
+impl Cheatcode for generate_public_key_p256Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self{ privateKey} = self;
         super::utils::generate_public_key_p256(privateKey)
