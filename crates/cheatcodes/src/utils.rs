@@ -416,6 +416,7 @@ mod tests {
         println!("x_coord: {x_coord}");
         println!("y_coord: {y_coord}");
     }
+
     #[test]
     fn test_p256_publickey_generation() {
         // Hexadecimal private key
