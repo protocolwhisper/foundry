@@ -393,8 +393,9 @@ mod tests {
         let result = sign_p256(&U256::ZERO, &digest, &mut cheats);
         assert_eq!(result.err().unwrap().to_string(), "private key cannot be 0");
     }
+
     #[test]
-    fn test_affinecoordinatesp256() {
+    fn test_affine_coordinates_p256() {
         let pk_u256: U256 = "100".parse().unwrap(); // Parse private key, assuming valid U256 creation
         let result = generate_public_key_p256(&pk_u256).unwrap(); // Get the ABI-encoded result
 
