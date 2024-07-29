@@ -338,11 +338,10 @@ fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{FixedBytes, U32};
-    use hex::FromHex;
+    use alloy_primitives::{hex::{self, FromHex}, FixedBytes};
     use p256::{ecdsa::signature::hazmat::PrehashVerifier, SecretKey};
     use std::{path::PathBuf, sync::Arc};
-
+    
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
             ffi: true,
