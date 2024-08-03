@@ -1,103 +1,11 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, DatabaseExt, Result, Vm::*};
-use alloy_primitives::{keccak256, Address, B256, U256};
-use alloy_signer::{Signer, SignerSync};
-use alloy_signer_local::{
-    coins_bip39::{
-        ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
-        Portuguese, Spanish, Wordlist,
-    },
-    MnemonicBuilder, PrivateKeySigner,
-};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use k256::{
-    ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, Curve},
-    Secp256k1,
-};
-use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey as P256SigningKey};
 use rand::Rng;
-
-/// The BIP32 default derivation path prefix.
-const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
-
-impl Cheatcode for createWallet_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { walletLabel } = self;
-        create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
-    }
-}
-
-impl Cheatcode for createWallet_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { privateKey } = self;
-        create_wallet(privateKey, None, state)
-    }
-}
-
-impl Cheatcode for createWallet_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { privateKey, walletLabel } = self;
-        create_wallet(privateKey, Some(walletLabel), state)
-    }
-}
-
-impl Cheatcode for getNonce_1Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { wallet } = self;
-        super::evm::get_nonce(ccx, &wallet.addr)
-    }
-}
-
-impl Cheatcode for sign_3Call {
-    fn apply_stateful<DB: DatabaseExt>(&self, _: &mut CheatsCtxt<DB>) -> Result {
-        let Self { wallet, digest } = self;
-        sign(&wallet.privateKey, digest)
-    }
-}
-
-impl Cheatcode for deriveKey_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { mnemonic, index } = self;
-        derive_key::<English>(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index)
-    }
-}
-
-impl Cheatcode for deriveKey_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { mnemonic, derivationPath, index } = self;
-        derive_key::<English>(mnemonic, derivationPath, *index)
-    }
-}
-
-impl Cheatcode for deriveKey_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { mnemonic, index, language } = self;
-        derive_key_str(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index, language)
-    }
-}
-
-impl Cheatcode for deriveKey_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { mnemonic, derivationPath, index, language } = self;
-        derive_key_str(mnemonic, derivationPath, *index, language)
-    }
-}
-
-impl Cheatcode for rememberKeyCall {
-    fn apply_stateful<DB: DatabaseExt>(&self, ccx: &mut CheatsCtxt<DB>) -> Result {
-        let Self { privateKey } = self;
-        let wallet = parse_wallet(privateKey)?;
-        let address = wallet.address();
-        if let Some(script_wallets) = ccx.state.script_wallets() {
-            script_wallets.add_local_signer(wallet);
-        }
-        Ok(address.abi_encode())
-    }
-}
 
 impl Cheatcode for labelCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
